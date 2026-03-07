@@ -24,6 +24,8 @@ export interface WorktreeOptions {
 export interface WorktreeRemoveOptions {
   repoCwd: string;
   worktreePath: string;
+  /** If provided, the branch is deleted after the worktree is removed. */
+  deleteBranch?: { branchName: string };
   onLog: (stream: "stdout" | "stderr", msg: string) => Promise<void>;
 }
 
@@ -62,11 +64,16 @@ export async function ensureGitWorktree(opts: WorktreeOptions): Promise<Worktree
   const { repoCwd, branchName, worktreePath, baseBranch, onLog } = opts;
   const absWorktree = path.resolve(repoCwd, worktreePath);
 
-  // Check if worktree already exists at this path
-  const worktreeExists = await fs
-    .stat(path.join(absWorktree, ".git"))
-    .then(() => true)
-    .catch(() => false);
+  // Check if worktree already exists by querying git directly.
+  // Resolve symlinks (e.g., /tmp → /private/tmp on macOS) for reliable comparison.
+  const existingWorktrees = await listGitWorktrees(repoCwd);
+  const realAbsWorktree = await fs.realpath(path.dirname(absWorktree)).then(
+    (real) => path.join(real, path.basename(absWorktree)),
+    () => absWorktree,
+  );
+  const worktreeExists = existingWorktrees.some(
+    (wt) => path.resolve(wt) === realAbsWorktree,
+  );
 
   if (worktreeExists) {
     await onLog("stderr", `[paperclip] Reusing existing worktree at ${absWorktree}\n`);
@@ -101,10 +108,10 @@ export async function ensureGitWorktree(opts: WorktreeOptions): Promise<Worktree
 }
 
 /**
- * Remove a git worktree and optionally delete its branch.
+ * Remove a git worktree. Optionally delete the associated branch via `deleteBranch`.
  */
 export async function removeGitWorktree(opts: WorktreeRemoveOptions): Promise<void> {
-  const { repoCwd, worktreePath, onLog } = opts;
+  const { repoCwd, worktreePath, deleteBranch, onLog } = opts;
   const absWorktree = path.resolve(repoCwd, worktreePath);
 
   try {
@@ -113,6 +120,15 @@ export async function removeGitWorktree(opts: WorktreeRemoveOptions): Promise<vo
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     await onLog("stderr", `[paperclip] Warning: failed to remove worktree at ${absWorktree}: ${reason}\n`);
+  }
+
+  if (deleteBranch) {
+    try {
+      await git(repoCwd, ["branch", "-d", deleteBranch.branchName]);
+      await onLog("stderr", `[paperclip] Deleted branch ${deleteBranch.branchName}\n`);
+    } catch {
+      // Non-fatal: branch may still have unmerged changes or already be gone
+    }
   }
 }
 
@@ -146,11 +162,12 @@ export async function pruneGitWorktrees(repoCwd: string): Promise<void> {
  * Build a sanitized slug from an agent name, suitable for branch names.
  */
 export function agentSlug(agentName: string): string {
-  return agentName
+  const slug = agentName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 40);
+  return slug || "agent";
 }
 
 /**
@@ -159,7 +176,8 @@ export function agentSlug(agentName: string): string {
 export function worktreePath(repoCwd: string, agentName: string, runId: string): string {
   const slug = agentSlug(agentName);
   const shortRun = runId.slice(0, 8);
-  return path.join(path.dirname(repoCwd), `.paperclip-worktrees`, `${slug}-${shortRun}`);
+  const normalizedRoot = path.resolve(repoCwd);
+  return path.join(path.dirname(normalizedRoot), `.paperclip-worktrees`, `${slug}-${shortRun}`);
 }
 
 /**
@@ -169,50 +187,4 @@ export function worktreeBranch(agentName: string, taskId: string | null): string
   const slug = agentSlug(agentName);
   const suffix = taskId ? taskId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 20) : "general";
   return `paperclip/${slug}/${suffix}`;
-}
-
-/**
- * Detect whether `dir` is inside a `.paperclip-worktrees` directory.
- */
-export function isPaperclipWorktree(dir: string): boolean {
-  return dir.includes(`${path.sep}.paperclip-worktrees${path.sep}`) ||
-    dir.includes("/.paperclip-worktrees/");
-}
-
-/**
- * Remove all Paperclip worktrees for a specific agent from a repository.
- *
- * Scans the `.paperclip-worktrees` directory next to `repoCwd` and removes
- * any worktree whose directory name starts with the agent's slug.
- */
-export async function cleanupAgentWorktrees(opts: {
-  repoCwd: string;
-  agentName: string;
-  onLog: (stream: "stdout" | "stderr", msg: string) => Promise<void>;
-}): Promise<number> {
-  const { repoCwd, agentName, onLog } = opts;
-  const slug = agentSlug(agentName);
-  const worktreesDir = path.join(path.dirname(repoCwd), ".paperclip-worktrees");
-
-  let entries: string[];
-  try {
-    entries = await fs.readdir(worktreesDir);
-  } catch {
-    return 0;
-  }
-
-  let removed = 0;
-  for (const entry of entries) {
-    if (!entry.startsWith(slug)) continue;
-    const wtPath = path.join(worktreesDir, entry);
-    try {
-      await removeGitWorktree({ repoCwd, worktreePath: wtPath, onLog });
-      removed++;
-    } catch {
-      // Non-fatal; worktree may already be gone
-    }
-  }
-
-  await pruneGitWorktrees(repoCwd);
-  return removed;
 }
