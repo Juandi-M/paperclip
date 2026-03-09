@@ -64,3 +64,7 @@ export function resolveDefaultAgentWorkspaceDir(agentId: string): string {
 export function resolveHomeAwarePath(value: string): string {
   return path.resolve(expandHomePrefix(value));
 }
+
+export function resolveDefaultAgentRuntimeDir(): string {
+  return path.resolve(resolvePaperclipInstanceRoot(), "agent-runtime");
+}

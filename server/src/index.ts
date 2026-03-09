@@ -24,7 +24,7 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./middleware/logger.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
-import { heartbeatService } from "./services/index.js";
+import { heartbeatService, syncAgentRuntimeToS3 } from "./services/index.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
@@ -566,6 +566,36 @@ if (config.databaseBackupEnabled) {
   setInterval(() => {
     void runScheduledBackup();
   }, backupIntervalMs);
+}
+
+if (config.storageProvider === "s3" && config.agentRuntimeSyncEnabled) {
+  let syncInFlight = false;
+
+  const runAgentRuntimeSync = async () => {
+    if (syncInFlight) return;
+    syncInFlight = true;
+    try {
+      const result = await syncAgentRuntimeToS3();
+      if (result.uploaded > 0 || result.errors > 0) {
+        logger.info(result, "agent runtime S3 sync complete");
+      }
+    } catch (err) {
+      logger.error({ err }, "agent runtime S3 sync failed");
+    } finally {
+      syncInFlight = false;
+    }
+  };
+
+  // Run once at startup, then on interval
+  void runAgentRuntimeSync();
+  setInterval(() => {
+    void runAgentRuntimeSync();
+  }, config.agentRuntimeSyncIntervalMs);
+
+  logger.info(
+    { intervalMs: config.agentRuntimeSyncIntervalMs, dir: config.agentRuntimeDir },
+    "Agent runtime S3 sync enabled",
+  );
 }
 
 server.listen(listenPort, config.host, () => {

@@ -15,6 +15,7 @@ import {
   type StorageProvider,
 } from "@paperclipai/shared";
 import {
+  resolveDefaultAgentRuntimeDir,
   resolveDefaultBackupDir,
   resolveDefaultEmbeddedPostgresDir,
   resolveDefaultSecretsKeyFilePath,
@@ -61,6 +62,9 @@ export interface Config {
   heartbeatSchedulerEnabled: boolean;
   heartbeatSchedulerIntervalMs: number;
   companyDeletionEnabled: boolean;
+  agentRuntimeDir: string;
+  agentRuntimeSyncEnabled: boolean;
+  agentRuntimeSyncIntervalMs: number;
 }
 
 export function loadConfig(): Config {
@@ -243,5 +247,10 @@ export function loadConfig(): Config {
     heartbeatSchedulerEnabled: process.env.HEARTBEAT_SCHEDULER_ENABLED !== "false",
     heartbeatSchedulerIntervalMs: Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
     companyDeletionEnabled,
+    agentRuntimeDir: resolveHomeAwarePath(
+      process.env.PAPERCLIP_AGENT_RUNTIME_DIR ?? resolveDefaultAgentRuntimeDir(),
+    ),
+    agentRuntimeSyncEnabled: process.env.PAPERCLIP_AGENT_RUNTIME_SYNC_ENABLED !== "false",
+    agentRuntimeSyncIntervalMs: Math.max(60000, Number(process.env.PAPERCLIP_AGENT_RUNTIME_SYNC_INTERVAL_MS) || 5 * 60 * 1000),
   };
 }
