@@ -285,7 +285,7 @@ Measure whether the cleanup actually worked.
 | 8 | Phase 5 stderr classification (backend ✅, UI 🔲) | ✅ Backend Done |
 | 9 | Phase 9 auth bootstrap integrity | ✅ Done |
 | 10 | Phase 6 observability metrics | ✅ Done |
-| 11 | Integrate circuit breaker (#390) | 🔲 After noise baseline is clean |
+| 11 | Integrate circuit breaker (#390) | ✅ Done |
 
 ## Acceptance Criteria
 

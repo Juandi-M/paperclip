@@ -22,6 +22,7 @@ import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { parseObject, asBoolean, asNumber, appendWithCap, MAX_EXCERPT_BYTES } from "../adapters/utils.js";
 import { costService } from "./costs.js";
 import { calculateTokenCostCents, accumulateStderrStats, type StderrStats } from "@paperclipai/shared";
+import { evaluateCircuitBreaker, tripCircuitBreaker } from "./circuit-breaker.js";
 import { isPaperclipWorktree, gitRepoRoot, removeGitWorktree, pruneGitWorktrees } from "@paperclipai/adapter-utils/git-worktree";
 import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
@@ -899,6 +900,18 @@ export function heartbeatService(db: Db) {
           outcome,
         },
       });
+
+      // Evaluate circuit breaker after status is finalized
+      if (updated.status !== "paused" && updated.status !== "terminated") {
+        try {
+          const cbResult = await evaluateCircuitBreaker(db, agentId, outcome);
+          if (cbResult.tripped) {
+            await tripCircuitBreaker(db, agentId, cbResult);
+          }
+        } catch (err) {
+          logger.error({ err, agentId }, "circuit breaker evaluation failed");
+        }
+      }
     }
   }
 
